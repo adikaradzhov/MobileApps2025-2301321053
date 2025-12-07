@@ -14,15 +14,19 @@ import androidx.camera.view.PreviewView
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.quickstage.ui.viewmodel.AppViewModel
+import com.example.quickstage.ui.viewmodel.ScanStatus
 import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.common.InputImage
 import java.util.concurrent.Executors
@@ -32,16 +36,37 @@ import java.util.concurrent.Executors
 fun ScannerScreen(viewModel: AppViewModel, onScanComplete: () -> Unit) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-    var hasCameraPermission by remember { mutableStateOf(false) }
+    val scanStatus by viewModel.scanStatus.collectAsStateWithLifecycle()
 
-    // Check permissions
-    // Simplification: assume permissions are handled or granted. In a real app we'd request them properly.
-    // For this prototype, user must grant permission manually or we request it here.
-    
-    // We'll use a side effect to request permission if needed, or better, assume the wrapper activity does it.
-    // Let's rely on the user having granted it for now, or use accompanist/standard methods.
-    
-    // For simplicity in this "minimal" app code generation:
+    // Handle Popup
+    when (val status = scanStatus) {
+        is ScanStatus.Success -> {
+            AlertDialog(
+                onDismissRequest = { viewModel.resetScanStatus() },
+                title = { Text("Success") },
+                text = { Text(status.message) },
+                confirmButton = {
+                    TextButton(onClick = { viewModel.resetScanStatus() }) {
+                        Text("OK")
+                    }
+                }
+            )
+        }
+        is ScanStatus.Error -> {
+            AlertDialog(
+                onDismissRequest = { viewModel.resetScanStatus() },
+                title = { Text("Error") },
+                text = { Text(status.message) },
+                confirmButton = {
+                    TextButton(onClick = { viewModel.resetScanStatus() }) {
+                        Text("OK")
+                    }
+                }
+            )
+        }
+        else -> {}
+    }
+
     AndroidView(
         factory = { ctx ->
             PreviewView(ctx).apply {
@@ -73,11 +98,8 @@ fun ScannerScreen(viewModel: AppViewModel, onScanComplete: () -> Unit) {
                             .addOnSuccessListener { barcodes ->
                                 for (barcode in barcodes) {
                                     barcode.rawValue?.let { value ->
-                                        Log.d("Scanner", "Scanned: $value")
+                                        // Stop logging, just process
                                         viewModel.processScan(value)
-                                        // Simple throttle or one-shot
-                                        // For now, let's toast and close
-                                        // In real app, we might want continuous scanning
                                     }
                                 }
                             }

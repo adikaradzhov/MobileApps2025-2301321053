@@ -19,6 +19,12 @@ import com.example.quickstage.utils.QRCodeUtils
 import java.io.File
 import java.io.FileOutputStream
 
+sealed class ScanStatus {
+    object Idle : ScanStatus()
+    data class Success(val message: String) : ScanStatus()
+    data class Error(val message: String) : ScanStatus()
+}
+
 class AppViewModel(
     private val ticketDao: TicketDao,
     private val scanLogDao: ScanLogDao
@@ -26,12 +32,19 @@ class AppViewModel(
 
     private val _adminPassword = MutableStateFlow<String?>(null)
     val adminPassword = _adminPassword.asStateFlow()
+    
+    private val _scanStatus = MutableStateFlow<ScanStatus>(ScanStatus.Idle)
+    val scanStatus = _scanStatus.asStateFlow()
 
     val allTickets = ticketDao.getAllTickets()
     val allLogs = scanLogDao.getAllLogs()
 
     fun setAdminPassword(password: String) {
         _adminPassword.value = password
+    }
+    
+    fun resetScanStatus() {
+        _scanStatus.value = ScanStatus.Idle
     }
     
     fun generateTicket(maxUsage: Int = 1) {
@@ -81,13 +94,15 @@ class AppViewModel(
     }
 
     fun processScan(content: String) {
+        if (_scanStatus.value !is ScanStatus.Idle) return
+
         val password = _adminPassword.value ?: return
         viewModelScope.launch {
             try {
                 // Format: <id>.<hash>
                 val parts = content.split(".")
                 if (parts.size != 2) {
-                    logScan(-1, false, "Invalid format")
+                    handleScanResult(-1, false, "Invalid format")
                     return@launch
                 }
 
@@ -95,42 +110,47 @@ class AppViewModel(
                 val providedHash = parts[1]
 
                 if (ticketId == null) {
-                    logScan(-1, false, "Invalid ID")
+                    handleScanResult(-1, false, "Invalid ID")
                     return@launch
                 }
 
                 // 1. Validate Hash
                 val expectedHash = CryptoUtils.generateHash(ticketId, password)
                 if (providedHash != expectedHash) {
-                    logScan(ticketId, false, "Invalid Hash")
+                    handleScanResult(ticketId, false, "Invalid Hash")
                     return@launch
                 }
 
                 // 2. Check Database existence (optional but good)
                 val ticket = ticketDao.getTicketById(ticketId)
                 if (ticket == null) {
-                    logScan(ticketId, false, "Ticket not found in DB")
+                    handleScanResult(ticketId, false, "Ticket not found in DB")
                     return@launch
                 }
 
                 // 3. Check Usage
                 val usageCount = scanLogDao.getUsageCount(ticketId)
                 if (usageCount >= ticket.maxUsage) {
-                    logScan(ticketId, false, "Usage limit exceeded")
+                    handleScanResult(ticketId, false, "Usage limit exceeded")
                     return@launch
                 }
 
                 // Valid
-                logScan(ticketId, true, "Success")
+                handleScanResult(ticketId, true, "Success")
                 
             } catch (e: Exception) {
-                logScan(-1, false, "Error processing: ${e.message}")
+                handleScanResult(-1, false, "Error processing: ${e.message}")
             }
         }
     }
     
-    private suspend fun logScan(ticketId: Int, isValid: Boolean, message: String) {
+    private suspend fun handleScanResult(ticketId: Int, isValid: Boolean, message: String) {
         scanLogDao.insert(ScanLog(ticketId = ticketId, isValid = isValid, message = message))
+        if (isValid) {
+            _scanStatus.value = ScanStatus.Success(message)
+        } else {
+            _scanStatus.value = ScanStatus.Error(message)
+        }
     }
 }
 
